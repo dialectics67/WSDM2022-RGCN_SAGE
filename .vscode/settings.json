@@ -1,0 +1,9 @@
+{
+    "files.exclude": {
+        "**/__pycache__": true
+    },
+    "python.analysis.extraPaths": [
+        "../public_utils"
+    ],
+    "python.envFile": "${workspaceFolder}/../.env"
+}

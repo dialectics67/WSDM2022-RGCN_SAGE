@@ -1,0 +1,66 @@
+target:
+  service: sing
+  name: SingularityTestVC
+  workspace_name: msroctows
+
+# target:
+#   service: sing
+#   name: msrresrchvc
+#   workspace_name: msroctows
+
+# target  workspace registry match
+
+## environment
+environment:
+  # image: amlt-sing/deepspeed-0.4-pytorch-1.10.0
+  registry: msroctocr.azurecr.io/v-cyue
+  image: test:v
+
+#storage:
+#  # You can tell AMLT to store results in a different container optimized for writing.
+#  output:
+#    storage_account_name: usscv100data
+#    container_name: v-cyue
+
+# code:
+#   # upload the code
+#   local_dir: $CONFIG_DIR/../../
+
+data:
+  # don't forget to run with --upload-data
+  # config_dir is yaml dir
+  local_dir: $CONFIG_DIR/../../data
+
+  # The data will be uploaded to your default storage.
+  #   Check ``multi_storage.yaml'' for more flexibility.
+  remote_dir: registry_data/WSDM
+
+
+# description: $embedding
+
+# schedule two simple jobs, names for each job should be different:
+# jobs:
+#   - name: ${embedding}-${data_name}-${job_name}
+#     sku: G1-V100
+#     # process_count_per_node: 2
+#     sla_tier: premium # Default: premium
+#     execution_mode: basic # Default: basic
+#     priority: high # Default: medium high
+#     command:
+#       - export embedding=$embedding
+#       - export job_name=$job_name
+#       - export data_name=$data_name
+#       - export batch_size=$batch_size
+#       - export lr=$lr
+#       - export gpu=$gpu
+#       - export dim_node=$dim_node
+#       - export dim_time=$dim_time
+#       - export time_encoder_type=$time_encoder_type
+#       - export n_epoch=$n_epoch
+#       - export n_runs=$n_runs
+#       - export patience=$patience
+
+#       - cd WSDM2022-Classifier
+#       - bash run/run.sh
+#     submit_args:
+#       env: { WANDB_API_KEY: $WANDB_API_KEY }
