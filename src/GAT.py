@@ -5,7 +5,6 @@ import sys
 import time
 
 import dgl
-import dgl.nn.pytorch as dglnn
 import wandb
 import pandas as pd
 import numpy as np
@@ -17,50 +16,61 @@ from public_utils import load_public_dataset, load_statistics, get_missing_edges
 from public_path_manager import OutPutPathManager
 from sklearn.metrics import roc_auc_score
 from torch import nn
+from dgl.nn import GATConv
 
 
-class RGCN(nn.Module):
+class GAT(nn.Module):
     def __init__(self,
                  g,
-                 n_relation,
                  num_layers,
                  in_dim,
                  num_hidden,
                  out_dim,
-                 regularizer="basis",
-                 num_bases=-1,
-                 activation=F.relu,
-                 dropout=0.2,
-                 time_encoder_type="digits_E",
-                 n_time=128,
-                 n_neighbors=50,
-                 ):
-        super(RGCN, self).__init__()
+                 heads,
+                 activation,
+                 feat_drop,
+                 attn_drop,
+                 negative_slope,
+                 residual,
+                 time_encoder_type,
+                 n_time,
+                 n_relation,
+                 n_neighbors):
+        super(GAT, self).__init__()
         self.g = g
-        self.layers = nn.ModuleList()
-        self.dropout = nn.Dropout(dropout)
+        self.num_layers = num_layers
+        self.gat_layers = nn.ModuleList()
+        self.activation = activation
         self.n_neighbors = n_neighbors
-        # input layer
-        self.layers.append(dglnn.RelGraphConv(in_dim, num_hidden, n_relation, regularizer,
-                                              num_bases, activation=activation))
-        # hidden layers
-        for i in range(num_layers - 1):
-            self.layers.append(dglnn.RelGraphConv(num_hidden, num_hidden, n_relation, regularizer,
-                                                  num_bases, activation=activation))
-        # output layer
-        self.layers.append(dglnn.RelGraphConv(num_hidden, num_hidden, n_relation, regularizer,
-                                              num_bases))  # activation None
+        if num_layers > 1:
+            # input projection (no residual)
+            self.gat_layers.append(GATConv(
+                in_dim, num_hidden, heads[0],
+                feat_drop, attn_drop, negative_slope, False, self.activation))
+            # hidden layers
+            for l in range(1, num_layers-1):
+                # due to multi-head, the in_dim = num_hidden * num_heads
+                self.gat_layers.append(GATConv(
+                    num_hidden * heads[l-1], num_hidden, heads[l],
+                    feat_drop, attn_drop, negative_slope, residual, self.activation))
+            # output projection
+            self.gat_layers.append(GATConv(
+                num_hidden * heads[-2], out_dim, heads[-1],
+                feat_drop, attn_drop, negative_slope, residual, None))
+        else:
+            self.gat_layers.append(GATConv(
+                in_dim, out_dim, heads[0],
+                feat_drop, attn_drop, negative_slope, residual, None))
 
         # downstream models
         self.time_encoder = get_time_encoder(time_encoder_type, n_time)
         self.classifier = RelationalMLP(out_dim*2+n_time, n_relation)
 
     def forward(self, h):
-        sg = dgl.sampling.sample_neighbors(self.g, self.g.nodes(), fanout=self.n_neighbors, copy_edata=True)
-        for l, layer in enumerate(self.layers):
-            h = layer(sg, h, sg.edata['relation'])
-            if l != len(self.layers) - 1:
-                h = self.dropout(h)
+        sg = dgl.sampling.sample_neighbors(self.g, self.g.nodes(), fanout=self.n_neighbors,)
+        for l in range(self.num_layers):
+            h = self.gat_layers[l](sg, h)
+            h = h.flatten(1) if l != self.num_layers - 1 else h.mean(1)
         return h
 
     def predict(self, node_emb_cat, times, relation_idx):
@@ -117,10 +127,12 @@ def train(args):
         args.data_name, "test", "mixed"), statistics, True).to(args.device)
 
     # get model
-    model = RGCN(graph, statistics["max_rel"], args.num_layers, args.dim_node, args.dim_node, args.dim_node,
-                 regularizer='basis', num_bases=8, activation=F.relu, dropout=args.dropout,
-                 time_encoder_type=args.time_encoder_type, n_time=args.dim_time, n_neighbors=args.n_neighbors
-                 ).to(args.device)
+    heads = ([args.num_heads] * (args.num_layers-1)) + [args.num_out_heads]  # assign head num to every layers
+    model = GAT(graph, args.num_layers, args.dim_node, args.num_hidden, args.dim_node,
+                heads, F.elu, args.in_drop, args.attn_drop,
+                args.negative_slope, args.residual,
+                args.time_encoder_type, args.dim_time, n_relation=statistics["max_rel"],
+                n_neighbors=args.n_neighbors).to(args.device)
     parameters = [{'params': model.parameters()}]
     if args.learn_node_feats:
         parameters.append({'params': graph.ndata['feat']})
@@ -295,7 +307,7 @@ def get_args():
     parser.add_argument('-exp', '--exp_name', type=str, default="_Test", help='Which expriment does this job belong to')
     parser.add_argument('-job', '--job_name', type=str, default=str(time.time()), help='job name')
     parser.add_argument('--gpu', type=int, default=0, help='Which GPU')
-    parser.add_argument('--data_name', type=str, choices=["A", "B"], default='B', help='Dataset name')
+    parser.add_argument('--data_name', type=str, choices=["A", "B"], default='A', help='Dataset name')
     parser.add_argument('--n_epoch', type=int, default=50, help='Number of epochs')
 
     "------------------------------------------------------------------------------------------------"
@@ -312,17 +324,22 @@ def get_args():
 
     "------------------------------------------------------------------------------------------------"
     "parameters about model"
-    parser.add_argument('--model', type=str, default="SAGE", choices=["SAGE"], help='Embedding type')
+    parser.add_argument('--model', type=str, default="GAT", choices=["GAT"], help='Embedding type')
     parser.add_argument('--dim_node', type=int, default=128, help='Dimensions of the node embedding and node features')
     parser.add_argument('--dim_time', type=int, default=128, help='Dimensions of the time embedding')
     parser.add_argument('--time_encoder_type', type=str, default="digits_E",
                         choices=["period", "period_E", "digits", "digits_E"], help='Time Encoder')
     parser.add_argument("--num_layers", type=int, default=2, help="number of hidden layers")
+    
 
-
-    parser.add_argument("--dropout", type=float, default=0.2, help="model droop")
+    parser.add_argument("--num_heads", type=int, default=8, help="number of hidden attention heads")
+    parser.add_argument("--num_out_heads", type=int, default=1, help="number of output attention heads")
+    parser.add_argument("--num_hidden", type=int, default=8, help="number of hidden units")
+    parser.add_argument("--residual", action=str2bool, default="False", help="use residual connection")
+    parser.add_argument("--in_drop", type=float, default=.6, help="input feature dropout")
+    parser.add_argument("--attn_drop", type=float, default=.6, help="attention dropout")
+    parser.add_argument('--negative_slope', type=float, default=0.2, help="the negative slope of leaky relu")
     parser.add_argument('--n_neighbors', type=int, default=50, help="How many neighbors will be used smapled in GAT")
-    parser.add_argument('--num_bases', type=int, default=8, help="How many bases for RGCN")
 
     try:
         args = parser.parse_args()

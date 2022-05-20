@@ -4,8 +4,8 @@
 
 target:
   service: $service
-  name: SingularityTestVC
-  workspace_name: msroctows
+  name: itpwus2cpucl1
+  # workspace_name: msroctows
 
 # target:
 #   service: sing
@@ -17,9 +17,9 @@ target:
 ## environment
 environment:
   # image: amlt-sing/deepspeed-0.4-pytorch-1.10.0
-  registry: msroctocr.azurecr.io/v-cyue
-  image: test:v
-  # image: pytorch/pytorch:1.11.0-cuda11.3-cudnn8-devel
+  # registry: msroctocr.azurecr.io/v-cyue
+  # image: test:v
+  image: pytorch/pytorch:1.11.0-cuda11.3-cudnn8-devel
   setup:
     - pip install --upgrade pip
     - pip install numpy==1.21.3
@@ -78,3 +78,4 @@ jobs:
       - bash run/run.sh
     submit_args:
       env: { WANDB_API_KEY: $WANDB_API_KEY }
+      container_args: {cpus: 16, memory: 256g}

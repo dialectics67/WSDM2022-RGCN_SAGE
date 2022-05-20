@@ -19,46 +19,40 @@ from sklearn.metrics import roc_auc_score
 from torch import nn
 
 
-class RGCN(nn.Module):
+class GraphSAGE(nn.Module):
     def __init__(self,
                  g,
-                 n_relation,
                  num_layers,
                  in_dim,
                  num_hidden,
                  out_dim,
-                 regularizer="basis",
-                 num_bases=-1,
-                 activation=F.relu,
-                 dropout=0.2,
-                 time_encoder_type="digits_E",
-                 n_time=128,
-                 n_neighbors=50,
+
+                 activation,
+                 dropout,
+                 time_encoder_type,
+                 n_time,
+                 n_relation
                  ):
-        super(RGCN, self).__init__()
+        super(GraphSAGE, self).__init__()
         self.g = g
         self.layers = nn.ModuleList()
         self.dropout = nn.Dropout(dropout)
-        self.n_neighbors = n_neighbors
+
         # input layer
-        self.layers.append(dglnn.RelGraphConv(in_dim, num_hidden, n_relation, regularizer,
-                                              num_bases, activation=activation))
+        self.layers.append(dglnn.GraphConv(in_dim, num_hidden, activation=activation))
         # hidden layers
         for i in range(num_layers - 1):
-            self.layers.append(dglnn.RelGraphConv(num_hidden, num_hidden, n_relation, regularizer,
-                                                  num_bases, activation=activation))
+            self.layers.append(dglnn.GraphConv(num_hidden, num_hidden, activation=activation))
         # output layer
-        self.layers.append(dglnn.RelGraphConv(num_hidden, num_hidden, n_relation, regularizer,
-                                              num_bases))  # activation None
+        self.layers.append(dglnn.GraphConv(num_hidden, out_dim))  # activation None
 
         # downstream models
         self.time_encoder = get_time_encoder(time_encoder_type, n_time)
         self.classifier = RelationalMLP(out_dim*2+n_time, n_relation)
 
     def forward(self, h):
-        sg = dgl.sampling.sample_neighbors(self.g, self.g.nodes(), fanout=self.n_neighbors, copy_edata=True)
         for l, layer in enumerate(self.layers):
-            h = layer(sg, h, sg.edata['relation'])
+            h = layer(self.g, h)
             if l != len(self.layers) - 1:
                 h = self.dropout(h)
         return h
@@ -117,10 +111,10 @@ def train(args):
         args.data_name, "test", "mixed"), statistics, True).to(args.device)
 
     # get model
-    model = RGCN(graph, statistics["max_rel"], args.num_layers, args.dim_node, args.dim_node, args.dim_node,
-                 regularizer='basis', num_bases=8, activation=F.relu, dropout=args.dropout,
-                 time_encoder_type=args.time_encoder_type, n_time=args.dim_time, n_neighbors=args.n_neighbors
-                 ).to(args.device)
+    model = GraphSAGE(graph, args.num_layers, args.dim_node, args.dim_node, args.dim_node,
+                      F.relu, args.dropout, args.time_encoder_type,
+                      args.dim_time, n_relation=statistics["max_rel"]
+                      ).to(args.device)
     parameters = [{'params': model.parameters()}]
     if args.learn_node_feats:
         parameters.append({'params': graph.ndata['feat']})
@@ -295,7 +289,7 @@ def get_args():
     parser.add_argument('-exp', '--exp_name', type=str, default="_Test", help='Which expriment does this job belong to')
     parser.add_argument('-job', '--job_name', type=str, default=str(time.time()), help='job name')
     parser.add_argument('--gpu', type=int, default=0, help='Which GPU')
-    parser.add_argument('--data_name', type=str, choices=["A", "B"], default='B', help='Dataset name')
+    parser.add_argument('--data_name', type=str, choices=["A", "B"], default='A', help='Dataset name')
     parser.add_argument('--n_epoch', type=int, default=50, help='Number of epochs')
 
     "------------------------------------------------------------------------------------------------"
@@ -319,10 +313,8 @@ def get_args():
                         choices=["period", "period_E", "digits", "digits_E"], help='Time Encoder')
     parser.add_argument("--num_layers", type=int, default=2, help="number of hidden layers")
 
-
+    
     parser.add_argument("--dropout", type=float, default=0.2, help="model droop")
-    parser.add_argument('--n_neighbors', type=int, default=50, help="How many neighbors will be used smapled in GAT")
-    parser.add_argument('--num_bases', type=int, default=8, help="How many bases for RGCN")
 
     try:
         args = parser.parse_args()

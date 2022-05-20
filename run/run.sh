@@ -16,6 +16,7 @@ python src/main.py \
     --embedding $embedding \
     --data_name $data_name \
     --lr $lr \
+    --learn_node_feats $learn_node_feats \
     --n_epoch $n_epoch \
     --n_layers $n_layers \
     --weight_decay $weight_decay
